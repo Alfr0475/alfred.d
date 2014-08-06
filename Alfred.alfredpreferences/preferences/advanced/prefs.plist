@@ -4,5 +4,7 @@
 <dict>
 	<key>autoshowhistory</key>
 	<true/>
+	<key>history</key>
+	<false/>
 </dict>
 </plist>
