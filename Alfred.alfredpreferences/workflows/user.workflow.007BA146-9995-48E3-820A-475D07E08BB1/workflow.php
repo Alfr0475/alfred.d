@@ -4,11 +4,11 @@ require 'item.php';
 
 class Workflow
 {
-    const VERSION = '1a8d81f76835051396261db22cb668746fa23b9c';
+    const VERSION = '46ba038f033bd61593ef3f1e12da3f085343445a';
     const BUNDLE = 'de.gh01.alfred.github';
     const DEFAULT_CACHE_MAX_AGE = 10;
 
-    private static $fileCookies;
+    private static $filePids;
     /** @var PDO */
     private static $db;
     private static $query;
@@ -17,11 +17,15 @@ class Workflow
     public static function init($query = null)
     {
         self::$query = $query;
-        $dataDir  = $_SERVER['HOME'] . '/Library/Application Support/Alfred 2/Workflow Data/' . self::BUNDLE;
+        if (isset($_ENV['alfred_workflow_data'])) {
+            $dataDir = $_ENV['alfred_workflow_data'];
+        } else {
+            $dataDir = (isset($_ENV['HOME']) ? $_ENV['HOME'] : $_SERVER['HOME']) . '/Library/Application Support/Alfred 2/Workflow Data/' . self::BUNDLE;
+        }
         if (!is_dir($dataDir)) {
             mkdir($dataDir);
         }
-        self::$fileCookies = $dataDir . '/cookies';
+        self::$filePids = $dataDir . '/pid';
         $fileDb = $dataDir . '/db.sqlite';
         $exists = file_exists($fileDb);
         self::$db = new PDO('sqlite:' . $fileDb, null, null, array(PDO::ATTR_PERSISTENT => true));
@@ -75,8 +79,7 @@ class Workflow
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_HEADER, 1);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_COOKIEJAR, self::$fileCookies);
-        curl_setopt($ch, CURLOPT_COOKIEFILE, self::$fileCookies);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array('Authorization: token ' . self::getConfig('access_token')));
         curl_setopt($ch, CURLOPT_USERAGENT, 'alfred-github-workflow');
         if ($debug) {
             curl_setopt($ch, CURLOPT_PROXY, 'localhost');
@@ -164,32 +167,23 @@ class Workflow
         self::$db->exec('DELETE FROM request_cache');
     }
 
-    public static function deleteCookies()
+    public static function startServer()
     {
-        if (file_exists(self::$fileCookies)) {
-            unlink(self::$fileCookies);
+        if (version_compare(PHP_VERSION, '5.4', '>=')) {
+            self::stopServer();
+            shell_exec('php -S localhost:2233 server.php > /dev/null 2>&1 & echo $! >> "' . self::$filePids . '"');
         }
-        self::removeConfig('user');
     }
 
-    public static function getToken($content = null)
+    public static function stopServer()
     {
-        $content = $content ?: self::request('https://github.com/');
-        preg_match('@<meta content="(.*)" name="csrf-token" />@U', $content, $match);
-        return isset($match[1]) ? $match[1] : null;
-    }
-
-    public static function askForPassword($title, $label)
-    {
-        return exec('osascript <<END
-tell application "Alfred 2"
-    activate
-    set alfredPath to (path to application "Alfred 2")
-    set alfredIcon to path to resource "appicon.icns" in bundle (alfredPath as alias)
-    display dialog "' . escapeshellcmd(addslashes($label)) . ':" with title "' . escapeshellcmd(addslashes($title)) . '" buttons {"OK"} default button "OK" default answer "" with icon alfredIcon with hidden answer
-    set answer to text returned of result
-end tell
-END');
+        if (file_exists(self::$filePids)) {
+            $pids = file(self::$filePids);
+            foreach ($pids as $pid) {
+                shell_exec('kill -9 ' . $pid);
+            }
+            unlink(self::$filePids);
+        }
     }
 
     public static function checkUpdate()
